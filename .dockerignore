@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.git
+.github
+.env*
+*.md
+.data
+data
+backups
+tests
+
+# verschachtelte Projektkopien nie in den Build mitnehmen
+vylarisdata
+vylaris-data
