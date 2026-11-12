@@ -1,0 +1,33 @@
+name: Prüfen
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci --no-audit --no-fund
+      - name: Typen prüfen
+        run: npm run typecheck
+      - name: Tests (Modelle, DNS-Server, Proxy, Worker, Sicherheit)
+        run: npm test
+      - name: Seite bauen
+        run: npm run build
+      - name: Installer-Syntax prüfen
+        run: bash -n install.sh
+      - name: Compose-Datei prüfen
+        run: docker compose -f compose.yaml config -q
+      - name: Container-Image bauen
+        run: docker build -t vylarissecurity:ci .

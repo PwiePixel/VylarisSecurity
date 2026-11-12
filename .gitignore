@@ -1,0 +1,16 @@
+# Zugangsdaten und lokale Daten – niemals committen
+.env
+.env.*
+.data/
+
+# Build und Abhängigkeiten
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+.env.local
+.env.tunnel
+.env.app
+.env.worker
+backups/

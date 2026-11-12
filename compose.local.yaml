@@ -1,0 +1,9 @@
+# Ohne Cloudflare Tunnel: Panel und Proxy nur auf dem eigenen Rechner (127.0.0.1) veröffentlichen,
+# z. B. für einen eigenen Reverse-Proxy oder SSH-Tunnel. Der Installer nutzt diese Datei bei --no-cloudflare.
+services:
+  web:
+    ports:
+      - "127.0.0.1:8080:8080"
+  proxy:
+    ports:
+      - "127.0.0.1:8081:8081"

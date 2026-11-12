@@ -1,0 +1,156 @@
+# VylarisSecurity: Panel, DNS-Server, Proxy, Worker und Cloudflare Tunnel.
+#
+#   web     Panel + öffentliche Seiten (kein Port nach außen)
+#   dns     autoritativer DNS-Server – der EINZIGE Dienst mit veröffentlichtem Port (53/udp + 53/tcp)
+#   proxy   Reverse-Proxy (kein Port nach außen; erreichbar nur über den Tunnel)
+#   worker  Cloudflare-Abgleich, Erreichbarkeits-Scan, Traffic (Host-Netzwerk, damit er Adressen prüfen kann)
+#   tunnel  Cloudflare Tunnel (nur ausgehende Verbindungen)
+#
+# Daten: Volume "vs-data" (Konfiguration, Zugang, Protokoll – bleibt bei Updates erhalten) und "vs-runtime"
+# (Laufzeitwerte der Dienste). DNS-Server und Proxy sehen die Konfiguration nur lesend.
+name: vylarissecurity
+
+x-common: &common
+  image: vylarissecurity:latest
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  web:
+    <<: *common
+    build:
+      context: .
+      args:
+        SITE_URL: ${SITE_URL:-https://security.vylaris.it}
+    mem_limit: 512m
+    pids_limit: 256
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    env_file:
+      - path: .env.app      # ggf. ADMIN_SETUP_TOKEN (wird von ./install.sh admin angelegt)
+        required: false
+    volumes:
+      - vs-data:/data
+      - vs-runtime:/data/runtime:ro
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz/"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    networks:
+      - internal
+
+  dns:
+    <<: *common
+    command: ["node", "engine/dns/main.ts"]
+    mem_limit: 256m
+    pids_limit: 128
+    tmpfs:
+      - /tmp
+    environment:
+      DNS_PORT: "5353"
+      DNS_BIND: "0.0.0.0"
+      DNS_UPSTREAM: ${DNS_UPSTREAM:-1.1.1.1,9.9.9.9}
+    volumes:
+      - vs-data:/data:ro
+      - vs-runtime:/data/runtime
+    ports:
+      - "${DNS_BIND_IP:-0.0.0.0}:53:5353/udp"
+      - "${DNS_BIND_IP:-0.0.0.0}:53:5353/tcp"
+    healthcheck:
+      test: ["CMD", "node", "engine/dns/healthcheck.ts"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+      - egress              # für ALIAS-Auflösung (ausgehend)
+
+  proxy:
+    <<: *common
+    command: ["node", "engine/proxy/main.ts"]
+    mem_limit: 512m
+    pids_limit: 512
+    tmpfs:
+      - /tmp
+    environment:
+      PROXY_PORT: "8081"
+      PROXY_BIND: "0.0.0.0"
+    volumes:
+      - vs-data:/data:ro
+      - vs-runtime:/data/runtime
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD", "node", "engine/proxy/healthcheck.ts"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal            # erreichbar für den Tunnel
+      - egress              # erreicht die Server (ausgehend)
+
+  worker:
+    <<: *common
+    command: ["node", "engine/worker/main.ts"]
+    network_mode: host      # nötig, um Adressen im eigenen Netz zu prüfen (ARP, Ping) und Host-Schnittstellen zu messen
+    mem_limit: 256m
+    pids_limit: 256
+    tmpfs:
+      - /tmp
+    env_file:
+      - path: .env.worker   # Cloudflare-Token, Tunnel-ID, Proxmox-Geheimnis (nur hier, nie im Panel)
+        required: false
+    volumes:
+      - vs-data:/data
+      - vs-runtime:/data/runtime
+    healthcheck:
+      test: ["CMD", "node", "engine/worker/healthcheck.ts"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["cloudflare"]
+    command: tunnel --no-autoupdate run
+    env_file:
+      - .env.tunnel         # nur TUNNEL_TOKEN (nicht der API-Token)
+    mem_limit: 256m
+    pids_limit: 128
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      web:
+        condition: service_healthy
+      proxy:
+        condition: service_healthy
+    networks:
+      - internal
+      - egress
+
+volumes:
+  vs-data:
+    name: vylarissecurity-data
+  vs-runtime:
+    name: vylarissecurity-runtime
+
+networks:
+  internal:
+    internal: true
+  egress: {}
